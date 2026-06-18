@@ -1,6 +1,6 @@
 ---
 name: review-team
-description: Review a PR or diff with a team of specialist subagents, each owning one aspect (correctness, security, tests, performance, API/contract, readability), run in parallel and synthesized into one deduped, severity-ranked report with verified findings. Use when asked to "review this PR with a team", "do a thorough/multi-angle review", "get a bunch of agents to review", "deep review before I merge", or any review where breadth and parallel specialist coverage matter more than a single quick pass. Review-only — it reports findings, it does not fix them or open PRs (use /ship for the full pipeline).
+description: Review a PR or diff with a team of specialist subagents, each owning one aspect (correctness, security, tests, performance, API/contract, readability), run in parallel and synthesized into one deduped, severity-ranked report — then fix the confirmed critical/high/medium issues. Use when asked to "review this PR with a team", "do a thorough/multi-angle review and fix what you find", "get a bunch of agents to review", "deep review before I merge", or any review where breadth and parallel specialist coverage matter more than a single quick pass. It reports findings and applies the fixes, but does not open PRs or drive CI (use /ship for the full pipeline).
 ---
 
 # review-team — parallel specialist review, one synthesized report
@@ -9,20 +9,22 @@ A single reviewer reading a diff top-to-bottom finds the obvious things and
 misses the ones that need a specific lens. A security mindset and a
 test-coverage mindset notice different problems on the same line. This skill
 runs several specialists in parallel — each looking at the *whole* diff through
-*one* lens — then synthesizes, dedupes, and verifies their findings into a
-report a human can act on.
+*one* lens — then synthesizes, dedupes, and validates their findings into a
+report, and fixes the confirmed critical/high/medium issues it found.
 
-The output is a review, not a changeset. It does not edit code or open PRs —
-that keeps it safe to run on anything and fast to read. For the full
-review→fix→PR→CI pipeline, that's `/ship`.
+It produces both a report and a changeset, but stops short of opening a PR or
+driving CI — that keeps the loop tight (review and harden the working tree)
+without taking the outward-facing actions. For the full
+review→fix→PR→bots→CI→notify pipeline, that's `/ship`.
 
 ## What this is for vs. the alternatives
 
 - **`/code-review`** — one fast pass over the diff, optionally fixes/comments.
   Reach for it on small or routine changes.
 - **review-team (this)** — many specialists in parallel for breadth on a
-  larger or higher-stakes change. Report only.
-- **`/ship`** — uses a review like this as one phase, then fixes and ships.
+  larger or higher-stakes change, then applies the fixes. No PR/CI.
+- **`/ship`** — uses a review like this as one phase, then fixes, opens the PR,
+  triages the bots, and drives CI green.
 
 If the diff is tiny, don't convene a team — a single pass is faster and the
 overhead isn't worth it. Say so and fall back to `/code-review`.
@@ -161,9 +163,10 @@ ignore the whole thing, which is worse than no review.
 
    Asking agents to disprove rather than "double-check" is what kills confident
    hallucinations — a confirm-prompt rubber-stamps, a refute-prompt actually
-   tests. Run these in parallel; only **confirmed** findings go in the report at
-   full severity. `needs-author-call` items are reported but labeled as such.
-   Mediums/lows don't need their own validator — a quick look from you is enough.
+   tests. Run these in parallel; only **confirmed** findings survive at full
+   severity. `needs-author-call` items are reported but not auto-fixed. Validate
+   mediums too — they get fixed, so they need the same proof — but a quick look
+   from you suffices rather than a dedicated validator. Lows don't need it.
 
 3. **Rank** survivors by severity, and within severity by blast radius.
 
@@ -206,13 +209,53 @@ covers it. The "what looked good" and "coverage" sections matter: they tell the
 reader how much of the diff was actually examined and where the review is
 silent, so an empty section doesn't get misread as a clean bill of health.
 
+Present the report before you start fixing, so the user can see the full
+picture and the fixes are traceable back to specific findings.
+
+## Step 6 — Fix the confirmed issues
+
+Fix every **confirmed** critical, high, and medium finding. Leave alone:
+
+- **Lows / nits** — report them; fixing them balloons the diff for little gain.
+- **`needs-author-call` items** — these didn't survive validation cleanly, so a
+  fix would be a guess. Leave them in the report for the author to decide.
+- Anything whose fix is a genuine design decision, not a mechanical correction
+  (e.g. "this whole approach should change"). Flag it; don't unilaterally
+  redesign. When unsure whether something is mechanical or a design call, treat
+  it as a design call and leave it.
+
+How to fix well:
+
+- Make the **smallest correct change** per finding. This phase is hardening the
+  existing change, not refactoring it — a sprawling fix is harder to review and
+  more likely to introduce its own bugs.
+- Fix in dependency order, and re-check that a later fix doesn't undo an earlier
+  one.
+- After fixing, run the project's verification suite — formatter, linter, type
+  checker, and the tests covering the touched code (e.g. on Onyx: `ruff format`
+  + `ruff check`, `mypy`/`tsc`, `eslint`, `pytest`/jest on the affected paths).
+  A fix that breaks the build isn't a fix.
+- If a fix is non-obvious or spans several files, you can dispatch it to a
+  subagent with a precise spec, then read the resulting diff yourself — don't
+  trust "done" without looking.
+
+Then update the report: mark each finding **fixed** (with a one-line note on
+what changed) or **left** (with why). The final state should be: confirmed
+criticals/highs/mediums fixed in the working tree and verified, everything else
+documented for the human. Don't commit, push, or open a PR — leave the working
+tree staged-and-ready so the user (or `/ship`) takes it from there.
+
 ## Principles
 
-- **Report, don't fix.** The deliverable is findings. If the user wants the
-  fixes applied and the PR driven to green, that's `/ship`.
-- **A false positive is worse than a miss.** An unreliable report gets ignored
-  entirely. The disprove-first validation round is what earns the report's
-  trust — don't skip it to save time.
+- **Fix only what you proved.** Apply fixes for confirmed critical/high/medium
+  findings; never fix a `needs-author-call` item or a design decision. The
+  deliverable is a hardened working tree plus a report — not a PR. Opening the
+  PR and driving CI is `/ship`.
+- **A false positive is worse than a miss** — doubly so now that findings get
+  fixed, because a fix for a non-bug introduces a real one. The disprove-first
+  validation round is what makes auto-fixing safe; don't skip it to save time.
+- **Smallest correct fix.** This phase hardens the change; it doesn't refactor
+  it. Re-verify after fixing — a fix that breaks the build isn't a fix.
 - **Review the diff, not the repo.** Flag what the change introduces;
   pre-existing issues and lint-catchable nits are out of scope and just noise.
 - **Match the team to the diff.** Skip lenses with nothing to examine; add
