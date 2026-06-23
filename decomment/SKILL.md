@@ -1,15 +1,20 @@
 ---
 name: decomment
-description: Strip low-value comments from the current diff — change-narration, restating-the-code comments, tombstones, commented-out code, and AI-style explainers added in this branch. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo.
+description: Aggressively strip comments from the current diff — remove most comments outright, keeping only the few that encode non-obvious technical context (workarounds, hard-won gotchas, constraints) a competent reader couldn't recover from the code itself. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", "strip the comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo.
 ---
 
-# decomment — delete comments that talk to the reviewer, keep ones that talk to the next reader
+# decomment — delete by default; a comment must earn its place
 
-A good comment states a constraint the code itself can't show. Everything else —
-narrating what the next line does, explaining why a change is correct, marking
-where something used to be — is noise the moment the PR merges. This skill
-removes that noise **from the diff only**: pre-existing comments are someone
-else's call and out of scope.
+Most comments are noise. Good code says what it does; the reader can see that a
+loop loops and a constant is a constant. A comment earns its place only when it
+encodes something the code genuinely *can't* show — a non-obvious technical
+rationale, a workaround with the reason it exists, an ordering constraint, a
+trap that will bite the next person. Everything else goes.
+
+So the default here is **delete**. Don't ask "is this comment harmful?" — ask
+"would a competent reader lose real, non-recoverable information if this
+vanished?" If the answer isn't a clear yes, cut it. This runs **on the diff
+only**: pre-existing comments are someone else's call and out of scope.
 
 ## Scope: what "the diff" means
 
@@ -27,45 +32,65 @@ If the user gave a narrower path, intersect with it.
 
 ## Delete vs keep
 
-### Delete
+The keep list is short and the delete list is "almost everything else." When a
+comment doesn't clearly match a keep category, it goes.
 
-1. **Code narration** — restates what the adjacent line obviously does:
+### Delete (the default)
+
+1. **Code narration** — restates what the adjacent line does:
    `# increment counter`, `// loop over users`, `# call the helper`.
 2. **Change narration** — talks about the edit, not the code: `# Added to fix
    the race`, `// Updated to use the new API`, `# Now we also handle null`,
    `# This change ensures...`. The commit message is where that belongs.
 3. **Tombstones** — `# removed X`, `// previously this did Y`, `# moved to
-   utils.py`. Git history is the tombstone.
+   utils.py`. When a line of code is removed, no comment marks its grave; git
+   history is the tombstone.
 4. **Commented-out code** added in this diff. (In pre-existing lines it's out
    of scope here — that's the `cleanup` skill.)
-5. **Reviewer-directed justification** — `# this is safe because the lock is
-   held` *when the lock acquisition is two lines above and obvious*. If the
-   safety argument is genuinely non-local, it's a keeper (see below).
-6. **Redundant section banners** added in the diff (`# ===== helpers =====`)
-   in codebases that don't use them elsewhere.
-7. **Docstrings that only restate the signature** — `"""Gets the user.
-   Args: user_id: the user id."""` — *unless* lint or the project's convention
-   requires a docstring there; then reduce it to one honest line instead.
-8. **Placeholder TODOs with no content** — `# TODO: improve this`. A TODO
-   survives only if it names a concrete condition, ticket, or follow-up.
+5. **Restated-intent comments** — comments that paraphrase the code one level
+   up: `# validate the input` over a validation call, `# build the request`,
+   `# handle the error`. The function/variable names already say this.
+6. **Labels on constants and config** — `# max retries`, `# timeout in seconds`
+   above `MAX_RETRIES = 5` / `TIMEOUT_SECONDS = 30`. A well-named constant needs
+   no comment; if it isn't well-named, rename it (note it in the report) rather
+   than annotate it.
+7. **Comments on obvious logic** — anything explaining a step a competent reader
+   follows at a glance: early returns, guard clauses, simple mapping/filtering,
+   standard idioms.
+8. **Reviewer-directed justification** — `# this is safe because the lock is
+   held` when the lock acquisition is right there and obvious. Only survives if
+   the argument is genuinely non-local (see keep #1).
+9. **Section banners** added in the diff (`# ===== helpers =====`).
+10. **Docstrings that only restate the signature** — `"""Gets the user.
+    Args: user_id: the user id."""` — *unless* lint or project convention
+    requires a docstring there; then reduce it to one honest line.
+11. **Placeholder TODOs** — `# TODO: improve this`. A TODO survives only if it
+    names a concrete condition, ticket, or follow-up.
 
-### Keep (never touch)
+### Keep (the short list)
 
-- **Why-comments and constraints**: invariants, ordering requirements,
-  workarounds with the bug link, "must run before X because Y", off-by-one
-  explanations, performance rationale.
+- **Non-obvious technical context** — the reason this skill exists. A workaround
+  and *why* it's needed (ideally a link), an ordering constraint ("must run
+  before X because Y"), a subtle invariant, an off-by-one or floating-point
+  gotcha, a performance reason for an unusual approach, "the obvious way
+  deadlocks / breaks on input Z." The test: a sharp engineer reading the code
+  would be surprised or get it wrong without this. If yes, keep; if it merely
+  restates or reassures, delete.
 - **Lint/tooling directives**: `# noqa`, `# type: ignore`, `// eslint-disable`,
   `#[allow(...)]`, `@ts-expect-error`, pragmas, coverage markers.
 - **Public API doc comments** (docstrings, JSDoc, rustdoc) — trim padding if
   bloated, but a documented public surface stays documented.
 - **License/copyright headers** and file-level boilerplate the repo mandates.
-- **Anything matching the file's existing comment density and style.** The bar
-  is the surrounding code: in a heavily commented codebase, lean toward
-  keeping; in a sparse one, lean toward deleting.
 
-When genuinely unsure whether a comment carries non-obvious information, keep
-it and list it in the report — deleting a load-bearing comment is worse than
-leaving a mediocre one.
+Note what's gone: "match the surrounding comment density" is *not* a keep
+reason. Be aggressive even in a heavily commented file — the bar is whether the
+comment carries non-recoverable technical information, not whether its neighbors
+have comments too.
+
+When unsure, lean delete. The one exception: if a comment plausibly encodes a
+real gotcha or workaround you can't confirm from the code in front of you, keep
+it and flag it in the report — that specific case is where a wrong deletion is
+costly. General "it might help someone" is not that case; cut it.
 
 ## Workflow
 
