@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Take the current branch from "code written" to "ready for human review" autonomously — multi-agent code review, fix critical/high issues, open the PR, respond to AI reviewer comments (Greptile, Cubic), drive CI green (retrying flaky tests, fixing real failures), then notify the user. Use when asked to "ship this", "ship the PR", "get this ready for review", "open a PR and babysit it", "drive this to green", or any request to handle the whole review-PR-CI pipeline end to end.
+description: Take the current branch from "code written" to "ready for human review" autonomously — multi-agent code review, fix critical/high issues, open the PR, reply to and resolve AI reviewer comments (Greptile, Cubic), drive CI green (retrying flaky tests, fixing real failures), then notify the user. Use when asked to "ship this", "ship the PR", "get this ready for review", "open a PR and babysit it", "drive this to green", or any request to handle the whole review-PR-CI pipeline end to end.
 ---
 
 # ship — drive a branch to "ready for human review"
@@ -84,21 +84,54 @@ Match authors case-insensitively on `greptile` and `cubic` (e.g.
 bot has posted after ~10 minutes, assume they're not installed on this repo and
 move on — don't wait forever for reviewers that may not exist.
 
-Triage each comment on the merits, not on deference:
+Triage each comment on the merits, not on deference. Every bot comment gets a
+**reply, then a resolve** once it's actually handled — don't leave addressed
+threads open for the human to wade through:
 
-- **Real issue in this PR's scope** → fix it, include in the next commit.
-- **Real but out of scope** (pre-existing, adjacent code) → reply briefly
-  noting it's pre-existing; don't expand the PR.
-- **Wrong or noise** → reply with a one-line reason if the thread supports it;
-  otherwise skip. Never contort correct code to appease a bot.
+- **Real issue in this PR's scope** → fix it, include in the next commit. Once
+  the fix is pushed, reply with what you did and the commit sha, then resolve
+  the thread.
+- **Real but out of scope** (pre-existing, adjacent code) → reply noting it's
+  pre-existing and out of this PR's scope, then resolve; don't expand the PR.
+- **Wrong or noise** → reply with a one-line reason it doesn't apply, then
+  resolve. Never contort correct code to appease a bot.
+
+Reply in-thread and resolve via the API (resolving an inline thread needs a
+GraphQL mutation — there's no plain `gh` verb for it):
+
+```bash
+# reply in-thread to an inline review comment
+gh api repos/{owner}/{repo}/pulls/<n>/comments \
+  -f body="Fixed in <sha> — <one line>." -F in_reply_to=<comment_id>
+
+# list review threads with their node IDs + resolution state
+gh api graphql -f query='
+  query($owner:String!,$repo:String!,$num:Int!){
+    repository(owner:$owner,name:$repo){ pullRequest(number:$num){
+      reviewThreads(first:100){ nodes{
+        id isResolved
+        comments(first:1){ nodes{ author{login} body url } } } } } } }' \
+  -F owner={owner} -F repo={repo} -F num=<n>
+
+# resolve a thread once its comment is addressed
+gh api graphql -f query='
+  mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ isResolved } } }' \
+  -F id=<threadId>
+```
+
+Only resolve a thread you've replied to and genuinely handled — fix pushed, or
+declined with a stated reason. **Leave a thread unresolved when it's a real open
+disagreement you're escalating to the human** (see the cap below) so they see it
+sitting there; resolving it would bury the one thread that needs their eyes.
 
 After pushing fixes, the bots re-review the new commit — loop back and triage
 the new round. **Cap at 3 rounds**: if a bot keeps objecting after three
-fix-respond cycles, you're in a disagreement loop, not a convergence — leave
-the thread for the human and note it in the final report.
+fix-respond cycles, you're in a disagreement loop, not a convergence — reply
+once stating you're leaving it for the human, leave that thread unresolved, and
+note it in the final report.
 
-Never resolve or dismiss comments from human reviewers; this phase touches bot
-threads only.
+Never resolve, reply to, or dismiss comments from human reviewers; this phase
+touches bot threads only.
 
 ## Phase 5 — Drive CI green
 
@@ -136,7 +169,8 @@ status "proactive"; also PushNotification if that tool is available):
 
 - PR title + URL
 - Review: N findings fixed (by severity), N minor items left for the reviewer
-- Bot comments: N fixed, N replied-to/declined (with one-line reasons)
+- Bot comments: N fixed, N replied-to/declined (with one-line reasons), all
+  addressed threads resolved; N left unresolved for the human (with why)
 - CI: green, with N flaky reruns if any
 - Anything escalated or left open, stated plainly
 
@@ -147,8 +181,9 @@ message alone without re-deriving your state.
 ## Hard rules
 
 - Never force-push, never rewrite published history.
-- Never resolve/dismiss human review comments or merge the PR — "ready for
-  human review" is the finish line, not "merged".
+- Resolve bot threads only after addressing them (fix pushed, or declined with
+  a reason) — and never touch, reply to, or resolve human review comments or
+  merge the PR. "ready for human review" is the finish line, not "merged".
 - Every fix goes through the local verification suite before pushing; pushing
   a guess at CI wastes a full cycle and spams the bots.
 - Caps are real: 3 bot-review rounds, 2 flake reruns per check, 3 fix attempts
