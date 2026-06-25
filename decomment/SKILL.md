@@ -1,20 +1,29 @@
 ---
 name: decomment
-description: Aggressively strip comments from the current diff — remove most comments outright, keeping only the few that encode non-obvious technical context (workarounds, hard-won gotchas, constraints) a competent reader couldn't recover from the code itself. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", "strip the comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo.
+description: Ruthlessly strip comments from the current diff — delete nearly all of them, keeping only machine-read directives and the rare comment encoding a gotcha that would make a competent reader write a bug without it. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", "strip the comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo.
 ---
 
 # decomment — delete by default; a comment must earn its place
 
-Most comments are noise. Good code says what it does; the reader can see that a
-loop loops and a constant is a constant. A comment earns its place only when it
-encodes something the code genuinely *can't* show — a non-obvious technical
-rationale, a workaround with the reason it exists, an ordering constraint, a
-trap that will bite the next person. Everything else goes.
+We should rarely need code comments at all. Good code says what it does; the
+reader can see that a loop loops and a constant is a constant, and the names
+carry the intent. The right number of comments in a typical diff is close to
+zero. A comment earns its place only when the code genuinely *can't* show
+something and getting it wrong is costly — a workaround and why it exists
+(ideally a link), an ordering constraint, a subtle invariant, a trap that makes
+the obvious approach a bug. Everything else goes.
 
 So the default here is **delete**. Don't ask "is this comment harmful?" — ask
-"would a competent reader lose real, non-recoverable information if this
-vanished?" If the answer isn't a clear yes, cut it. This runs **on the diff
-only**: pre-existing comments are someone else's call and out of scope.
+"would a competent reader write a bug, or undo a deliberate choice, without
+this?" If the answer isn't a clear yes, cut it. This runs **on the diff only**:
+pre-existing comments are someone else's call and out of scope.
+
+**Multi-line comments are the most suspect of all.** A paragraph above a
+function is almost never carrying non-recoverable technical context — it's
+narration, design exposition, or reassurance. Treat any block comment as
+delete-on-sight unless every line of it clears the keep bar; in practice that
+means cut the whole block, or reduce it to the single line that actually
+matters.
 
 ## Scope: what "the diff" means
 
@@ -59,7 +68,8 @@ comment doesn't clearly match a keep category, it goes.
    standard idioms.
 8. **Reviewer-directed justification** — `# this is safe because the lock is
    held` when the lock acquisition is right there and obvious. Only survives if
-   the argument is genuinely non-local (see keep #1).
+   the argument is genuinely non-local and its absence would cause a bug (see
+   keep: "a gotcha that turns into a bug without it").
 9. **Section banners** added in the diff (`# ===== helpers =====`).
 10. **Docstrings that only restate the signature** — `"""Gets the user.
     Args: user_id: the user id."""` — *unless* lint or project convention
@@ -67,30 +77,38 @@ comment doesn't clearly match a keep category, it goes.
 11. **Placeholder TODOs** — `# TODO: improve this`. A TODO survives only if it
     names a concrete condition, ticket, or follow-up.
 
-### Keep (the short list)
+### Keep (rare — and most diffs will have nothing here)
 
-- **Non-obvious technical context** — the reason this skill exists. A workaround
-  and *why* it's needed (ideally a link), an ordering constraint ("must run
-  before X because Y"), a subtle invariant, an off-by-one or floating-point
-  gotcha, a performance reason for an unusual approach, "the obvious way
-  deadlocks / breaks on input Z." The test: a sharp engineer reading the code
-  would be surprised or get it wrong without this. If yes, keep; if it merely
-  restates or reassures, delete.
-- **Lint/tooling directives**: `# noqa`, `# type: ignore`, `// eslint-disable`,
-  `#[allow(...)]`, `@ts-expect-error`, pragmas, coverage markers.
-- **Public API doc comments** (docstrings, JSDoc, rustdoc) — trim padding if
-  bloated, but a documented public surface stays documented.
-- **License/copyright headers** and file-level boilerplate the repo mandates.
+- **Machine-read directives** — `# noqa`, `# type: ignore`, `// eslint-disable`,
+  `#[allow(...)]`, `@ts-expect-error`, pragmas, coverage markers, and
+  license/copyright headers the repo mandates. These aren't comments for humans;
+  they change tooling behavior. Keep verbatim.
+- **A gotcha that turns into a bug without it** — and *only* that. The bar is
+  strict: removing the comment would cause a competent engineer to write a bug,
+  undo a deliberate workaround, or violate a constraint they had no way to see
+  from the code. Examples that clear it: a workaround with a link to the issue
+  that forced it, "must run before X or Y races," "the obvious approach
+  deadlocks on input Z," a non-local invariant another file depends on. What
+  does *not* clear it: rationale that's merely nice to know, design exposition,
+  reassurance that something is correct/safe, or anything a reader recovers by
+  reading the names and the adjacent code. When it clears the bar, keep only the
+  one sentence that does — not the surrounding paragraph.
 
-Note what's gone: "match the surrounding comment density" is *not* a keep
-reason. Be aggressive even in a heavily commented file — the bar is whether the
-comment carries non-recoverable technical information, not whether its neighbors
-have comments too.
+Docstrings, JSDoc, and rustdoc get **no special protection**. Delete them like
+any other comment when the signature and names already say what they say —
+including on public functions. Keep one only when a linter, doc generator, or an
+enforced project convention *requires* it; then reduce it to a single honest
+line, never a multi-line block.
 
-When unsure, lean delete. The one exception: if a comment plausibly encodes a
-real gotcha or workaround you can't confirm from the code in front of you, keep
-it and flag it in the report — that specific case is where a wrong deletion is
-costly. General "it might help someone" is not that case; cut it.
+Note what's gone: "it's a public API," "it might help someone," and "match the
+surrounding comment density" are *not* keep reasons. Be aggressive even in a
+heavily commented file — neighbors having comments says nothing about whether
+this one carries non-recoverable technical information.
+
+When unsure, **delete** — no hedging. The single exception: a comment that
+plausibly encodes a real gotcha or workaround you genuinely cannot confirm or
+refute from the code in front of you. There, keep it and flag it in the report.
+That is the only case where uncertainty favors keeping; everything else, cut.
 
 ## Workflow
 
