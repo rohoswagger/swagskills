@@ -1,0 +1,37 @@
+{
+  "skill_name": "bugfix",
+  "evals": [
+    {
+      "id": 0,
+      "name": "backend-pricing-symptom-vs-cause",
+      "prompt": "Bug report (TICKET-4821): Customers say the BIG25 coupon makes items free. A $20.00 item (2000 cents) shows $0.00 at checkout after applying BIG25, instead of $15.00 (25% off). SAVE10 and FIVEOFF coupons work fine. This started after we shipped the summer promo. Python project; run tests with `python3 -m unittest discover -s tests -t .`. Fix it and get it ready for human review.",
+      "expected_output": "Root cause identified as units drift in coupons.py (BIG25 percent stored as whole number 25 vs fraction 0.10 for SAVE10), fixed at the coupon-data/normalization layer rather than the clamp in checkout.py. A regression test for BIG25 added (fails before, passes after). BIG25 on 2000c returns 1500; existing tests still pass. Minimal diff. PR-ready report explains the root cause.",
+      "files": [],
+      "assertions": [
+        {"text": "Root cause is identified as a units mismatch in coupons.py (BIG25 stored as 25 while percent coupons use fractions like 0.10), not merely the clamp/symptom in checkout.py"},
+        {"text": "The fix corrects the coupon units/normalization rather than only masking the symptom at the final_price_cents clamp"},
+        {"text": "A regression test is added that asserts BIG25 on a 2000c item returns 1500 (or 25% off generally)"},
+        {"text": "After the fix, final_price_cents(2000, 'BIG25') returns 1500"},
+        {"text": "Existing tests (SAVE10 -> 1800, FIVEOFF -> 1500, clamp -> 0) still pass"},
+        {"text": "The change is minimal and does not refactor unrelated code"},
+        {"text": "A PR-ready report/summary is produced that states the root cause in plain language"}
+      ]
+    },
+    {
+      "id": 1,
+      "name": "frontend-pagination-contract-mismatch",
+      "prompt": "Bug report (TICKET-5102): On the products page the first 12 products never appear — the grid starts at product #13. pageSize is 12 and the store starts the user on page 1. There's no way to reach products 1-12. JS project (ESM); run tests with `node --test`. Fix it and get it ready for human review.",
+      "expected_output": "Root cause identified as a 1-indexed vs 0-indexed contract mismatch between store.mjs (currentPage starts at 1) and pagination.mjs getPageItems (treats currentPage as 0-indexed). Minimal consistent fix chosen, with the design choice noted. Regression test added that reproduces the off-by-one. First page returns items from index 0; next()/prev() still navigate correctly; existing test still passes.",
+      "files": [],
+      "assertions": [
+        {"text": "Root cause is identified as a 1-indexed vs 0-indexed mismatch between the store's currentPage and getPageItems, spanning both files (not just one)"},
+        {"text": "After the fix, the first page (store starting at page 1) returns items beginning at index 0"},
+        {"text": "Pagination still advances correctly: the second page returns items starting at index 12 (no overlap or gap)"},
+        {"text": "A regression test is added that reproduces and locks the off-by-one"},
+        {"text": "The existing 'returns at most pageSize items' test still passes"},
+        {"text": "The fix is minimal and consistent; the report notes which side was changed and why (the design choice)"},
+        {"text": "A PR-ready report/summary is produced that states the root cause in plain language"}
+      ]
+    }
+  ]
+}
