@@ -1,6 +1,6 @@
 ---
 name: decomment
-description: Ruthlessly strip comments from the current diff — delete nearly all of them, keeping only machine-read directives and the rare comment encoding a gotcha that would make a competent reader write a bug without it. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", "strip the comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo.
+description: Ruthlessly strip comments from the current diff — delete nearly all of them, keeping only machine-read directives and the rare comment encoding a gotcha that would make a competent reader write a bug without it. Use when asked to "clean up comments", "decomment the diff", "remove noisy comments", "strip the comments", or before opening a PR. Only touches lines the diff added or modified; never sweeps the whole repo. If the tree was clean before it ran, it commits and pushes the decommenting edits; if the tree was already dirty, it leaves everything uncommitted to avoid sweeping in WIP.
 ---
 
 # decomment — delete by default; a comment must earn its place
@@ -124,8 +124,17 @@ That is the only case where uncertainty favors keeping; everything else, cut.
    files (some linters require docstrings — failures here mean restore/reduce).
    Run the test suite only if docstring removal could affect it (doctests).
 4. **Report.** Per file: comments removed (count + a few representative
-   examples), comments kept-but-borderline with one line on why. No commit
-   unless the user asked — this usually runs on an unfinished branch.
+   examples), comments kept-but-borderline with one line on why.
+5. **Commit and push.** Whether to commit depends on whether the tree was clean
+   *before* decommenting (check at step 1, not now):
+   - **Tree was clean** (branch-diff case): the only unstaged changes are yours.
+     Commit them and push to the current branch. Message: a one-liner like
+     `chore: strip noisy comments` (or match the repo's commit convention). If
+     `.git/ez/stack.json` exists, the repo is ez-stack managed — use
+     `ez commit -am "..."` then `ez push`, never raw `git commit`/`git push`.
+   - **Tree was dirty** (uncommitted-diff case): the user is mid-work and your
+     edits are interleaved with theirs — committing would sweep their WIP into
+     the commit. Leave everything uncommitted and say so in the report.
 
 ## Hard rules
 
