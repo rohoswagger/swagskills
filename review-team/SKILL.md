@@ -68,7 +68,63 @@ specialist on a docs-only change):
 - **performance** — N+1 queries, accidental quadratic loops, unbounded memory,
   blocking I/O on hot paths, missing pagination/indexes.
 - **readability & maintainability** — naming, dead code, duplicated logic,
-  comments that lie, structure that will be hard to change.
+  comments that lie, structure that will be hard to change. Also enforce the
+  code-quality house rules below.
+
+**Code-quality house rules** (give these to the readability lens verbatim —
+they're deliberate style choices, not generic advice):
+
+- **Escape hatches need a *proven* reason.** `cast()`, `# type: ignore`,
+  `as any`, `@ts-expect-error`, `# noqa` — each asserts the checker is wrong.
+  Don't just flag one: **delete it, run the type checker, and report what
+  happened.** Every cast lands in one of two buckets, and the checker tells you
+  which:
+  - *Removable* — the cast is propping up a redundant branch or a loose local
+    annotation. Fix the types instead: narrow with `isinstance`, annotate the
+    variable, correct the upstream return type, or convert once at the edge
+    (`dict(x)`). Report the replacement.
+  - *Load-bearing* — a third-party signature wants a `TypedDict`, a Protocol, or
+    an invariant generic, and nothing spelled `dict[str, Any]` (or `Mapping`) is
+    assignable to it. Then the cast *is* the boundary marker and should stay.
+    Report the checker error and name the vendor type, so the next reviewer
+    doesn't re-litigate it.
+
+  A reviewer who says "remove the cast" without having run the checker is
+  guessing, and the author burns a round trip disproving them. Two casts on
+  adjacent lines routinely fall in different buckets — judge each one.
+- **No dataclasses.** New structured types should be Pydantic models (validation,
+  serialization, consistency with the rest of the codebase), not
+  `@dataclass`. Flag any new dataclass the diff introduces.
+- **Inline single-use helpers.** A private function called from exactly one
+  place is usually indirection, not abstraction — the reader has to jump to it
+  and back for no reuse payoff. Inline it unless it earns its name: it isolates
+  something genuinely separable (a hairy algorithm, an I/O boundary) or exists
+  to be tested directly. The same applies to single-use constants, wrapper
+  classes, and one-line lambdas assigned to names.
+- **No speculative abstraction.** Interfaces with one implementation, config
+  knobs nothing sets, generic parameters instantiated one way — YAGNI. Build
+  the abstraction when the second use case arrives.
+- **Comments must be true, or gone.** A confident, stale comment is worse than
+  no comment: it misdirects whoever debugs the area next, and they'll trust it
+  over the code. Flag any comment the diff renders false, any comment that
+  narrates the change ("now also handles X") instead of explaining a non-obvious
+  *why*, and any comment asserting scope ("only X does Y") that the reader can't
+  verify locally — those rot silently and are the expensive kind.
+- **Unsupported input must fail loudly.** Quietly dropping a field or degrading
+  to a default — an unmappable enum becoming `auto`, an unknown key swallowed by
+  a permissive schema, a requested constraint ignored — produces a *plausible
+  wrong answer* with nothing downstream able to detect it. That's strictly worse
+  than an error. Prefer an explicit raise/4xx, and flag any silent fallback the
+  caller can't observe.
+- **Error paths preserve invariants.** If the happy path opens, locks,
+  registers, or emits a start-event, then every `except` and early return must
+  close it. Read the success path and each failure path side by side and look for
+  the asymmetry — this is where half of all streaming/resource bugs live.
+- **Identity is minted once.** A helper that generates an id, uuid, or timestamp
+  must not be called twice for the same logical entity; the second call silently
+  yields a different value. Watch for a builder invoked once while streaming and
+  again for the terminal payload — the two disagree and clients can't correlate
+  them.
 
 Add domain lenses when the diff calls for them (migrations, accessibility,
 i18n, concurrency, infra/IaC). Match the team to the change — more lenses isn't
@@ -205,7 +261,10 @@ lows compact so they don't bury the criticals. The effort hint (quick-win vs
 heavy-lift) lets you decide what to fix now vs. defer. For a small fix
 (roughly under six lines) include the exact replacement in the *fix:* note; for
 a structural or multi-location fix, describe it rather than pretending a snippet
-covers it. The "what looked good" and "coverage" sections matter: they tell the
+covers it. **Any snippet you hand over must actually compile and typecheck** —
+apply it and run the checker before it goes in the report. A plausible-looking
+replacement that the checker rejects wastes the author's time and costs the
+review its credibility; prose beats a broken snippet. The "what looked good" and "coverage" sections matter: they tell the
 reader how much of the diff was actually examined and where the review is
 silent, so an empty section doesn't get misread as a clean bill of health.
 
