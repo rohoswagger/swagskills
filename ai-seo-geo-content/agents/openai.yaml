@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI SEO/GEO Content"
+  short_description: "Research and draft evidence-led GEO content"
+  default_prompt: "Use $ai-seo-geo-content to plan and draft a programmatic comparison content cluster for my product."
