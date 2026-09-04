@@ -1,32 +1,44 @@
 #!/usr/bin/env bash
-# Symlink every skill in this repo (any dir containing SKILL.md) into
-# ~/.claude/skills, and prune links there that point into this repo but
-# no longer resolve. Runs automatically via git hooks; safe to run by hand.
+# Symlink every skill in ~/.agents/skills into ~/.codex/skills and
+# ~/.claude/skills. Prune managed links whose source no longer exists.
+# Safe to run repeatedly or by hand.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS_DIR="$HOME/.claude/skills"
-mkdir -p "$SKILLS_DIR"
+SOURCE_DIR="$HOME/.agents/skills"
+SKILLS_DIRS=("$HOME/.codex/skills" "$HOME/.claude/skills")
+BACKUP_DIR="$HOME/.agents/skill-sync-backups"
 
-# Link each skill dir
-for skill in "$REPO_DIR"/*/SKILL.md; do
-  [ -e "$skill" ] || continue
-  name="$(basename "$(dirname "$skill")")"
-  target="$REPO_DIR/$name"
-  link="$SKILLS_DIR/$name"
-  if [ -e "$link" ] && [ ! -L "$link" ]; then
-    echo "skip: $link exists and is not a symlink" >&2
-    continue
-  fi
-  ln -sfn "$target" "$link"
-  echo "linked: $name"
-done
+if [ ! -d "$SOURCE_DIR" ]; then
+  echo "error: source directory does not exist: $SOURCE_DIR" >&2
+  exit 1
+fi
 
-# Prune dangling symlinks that point into this repo
-for link in "$SKILLS_DIR"/*; do
-  [ -L "$link" ] || continue
-  dest="$(readlink "$link")"
-  case "$dest" in
-    *swagskills*) [ -e "$link" ] || { rm "$link"; echo "pruned: $(basename "$link")"; } ;;
-  esac
+for skills_dir in "${SKILLS_DIRS[@]}"; do
+  mkdir -p "$skills_dir"
+
+  for skill in "$SOURCE_DIR"/*/SKILL.md; do
+    [ -e "$skill" ] || continue
+    name="$(basename "$(dirname "$skill")")"
+    target="$SOURCE_DIR/$name"
+    link="$skills_dir/$name"
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+      client="$(basename "$(dirname "$skills_dir")")"
+      backup="$BACKUP_DIR/$client/$name.$(date +%Y%m%dT%H%M%S%N)"
+      mkdir -p "$(dirname "$backup")"
+      mv "$link" "$backup"
+      echo "backed up: $link -> $backup"
+    fi
+    ln -sfn "$target" "$link"
+    echo "linked: $link -> $target"
+  done
+
+  for link in "$skills_dir"/*; do
+    [ -L "$link" ] || continue
+    dest="$(readlink "$link")"
+    case "$dest" in
+      "$SOURCE_DIR"/*)
+        [ -e "$link" ] || { rm "$link"; echo "pruned: $link"; }
+        ;;
+    esac
+  done
 done
