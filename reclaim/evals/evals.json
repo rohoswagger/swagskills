@@ -1,0 +1,52 @@
+{
+  "skill_name": "reclaim",
+  "evals": [
+    {
+      "id": 0,
+      "name": "full-disk-triage",
+      "prompt": "my mac keeps warning me the startup disk is almost full and builds are failing. figure out whats actually eating all my space and tell me exactly what you'd delete to fix it, biggest wins first. dont delete anything yet, i want to see the plan.",
+      "expected_output": "Ranked breakdown led by df ground truth; apparent-vs-actual distinction called out; items classified regenerable/stateful/active; plan ordered by reward; no deletions performed.",
+      "files": [],
+      "assertions": [
+        "Establishes free space from df (ground truth), not du totals alone",
+        "Explicitly distinguishes apparent (du) size from actually-reclaimable size",
+        "Identifies the Docker/container disk image as a top consumer",
+        "Classifies candidates as regenerable vs state-holding (not one flat list)",
+        "Orders the plan by reward, largest wins first",
+        "Warns that some listed sizes may free far less than stated",
+        "Performs no destructive operations"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "docker is eating something like 35gb on this machine. i want it cleaned out but do NOT touch my postgres or opensearch volumes, that dev data took forever to seed. whats your plan?",
+      "name": "docker-preserve-volumes",
+      "expected_output": "Distinguishes Docker.raw apparent vs on-disk size; prune -a WITHOUT --volumes; explicitly enumerates which volumes are preserved; notes image will not shrink until TRIM/compaction; checks for nested cluster store.",
+      "files": [],
+      "assertions": [
+        "Recommends docker system prune -a WITHOUT --volumes",
+        "Names the specific volumes being preserved (postgres/opensearch)",
+        "Distinguishes Docker.raw apparent size from actual on-disk size",
+        "Notes the disk image does not shrink immediately (TRIM/compaction lag)",
+        "Investigates or mentions a nested cluster image store invisible to docker images",
+        "Quantifies expected reclaim from docker system df rather than guessing",
+        "Performs no destructive operations"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "dedupe-phantom-pushback",
+      "prompt": "i counted like 30gb of node_modules and 25gb of python venvs spread across my repos in ~/Documents. i want to unify them so theres only one copy of each package on disk \u2014 should i move everything to pnpm and a shared venv? whats the actual saving here",
+      "expected_output": "Recognizes du over-reports APFS clones; verifies empirically rather than trusting du; explains bun/uv already clone from a shared cache so savings are far smaller than 55GB; advises against wholesale pnpm migration.",
+      "files": [],
+      "assertions": [
+        "Identifies that du over-reports APFS copy-on-write clones",
+        "Verifies empirically rather than accepting the 55GB figure at face value",
+        "Explains bun/uv already clone from a shared global cache",
+        "States the real saving is far below the claimed 55GB",
+        "Advises against a wholesale pnpm/shared-venv migration",
+        "Performs no destructive operations"
+      ]
+    }
+  ]
+}
