@@ -1,6 +1,6 @@
 ---
 name: review-team
-description: Review a PR or diff with a team of specialist subagents, each owning one aspect (correctness, security, tests, performance, API/contract, readability), run in parallel and synthesized into one deduped, severity-ranked report — then fix the confirmed critical/high/medium issues. Use when asked to "review this PR with a team", "do a thorough/multi-angle review and fix what you find", "get a bunch of agents to review", "deep review before I merge", or any review where breadth and parallel specialist coverage matter more than a single quick pass. It reports findings and applies the fixes, but does not open PRs or drive CI (use /ship for the full pipeline).
+description: Review a PR or diff with a team of specialist reviewers running on the OPPOSITE model vendor from the host harness (Claude Code reviews with `codex exec`; Codex reviews with `claude -p`), each owning one aspect (correctness, security, tests, performance, API/contract, readability), run in parallel and synthesized into one deduped, severity-ranked report — then fix the confirmed critical/high/medium issues. Use when asked to "review this PR with a team", "do a thorough/multi-angle review and fix what you find", "get a bunch of agents to review", "deep review before I merge", or any review where breadth and parallel specialist coverage matter more than a single quick pass. It reports findings and applies the fixes, but does not open PRs or drive CI (use /ship for the full pipeline).
 ---
 
 # review-team — parallel specialist review, one synthesized report
@@ -11,6 +11,11 @@ test-coverage mindset notice different problems on the same line. This skill
 runs several specialists in parallel — each looking at the *whole* diff through
 *one* lens — then synthesizes, dedupes, and validates their findings into a
 report, and fixes the confirmed critical/high/medium issues it found.
+
+The specialists run on a **different model vendor than the one you're running
+on**. A model reviewing its own output shares its blind spots: the same training
+priors that produced the code make the mistake look normal on re-read. Crossing
+vendors is the cheapest way to get genuinely independent eyes — see Step 0.
 
 It produces both a report and a changeset, but stops short of opening a PR or
 driving CI — that keeps the loop tight (review and harden the working tree)
@@ -28,6 +33,73 @@ review→fix→PR→bots→CI→notify pipeline, that's `/ship`.
 
 If the diff is tiny, don't convene a team — a single pass is faster and the
 overhead isn't worth it. Say so and fall back to `/code-review`.
+
+## Step 0 — Pick the reviewing model (opposite vendor)
+
+Reviewers run on the **other** vendor's CLI, not on the harness you're in.
+
+Detect the host first — don't assume:
+
+```bash
+# Anthropic host (Claude Code) sets CLAUDECODE; Codex CLI sets CODEX_HOME/CODEX_SANDBOX.
+[ -n "$CLAUDECODE" ] && echo "host=anthropic"
+[ -n "$CODEX_HOME$CODEX_SANDBOX" ] && echo "host=openai"
+```
+
+| Host harness | Reviewer CLI | Invocation |
+|---|---|---|
+| Claude Code (Anthropic) | OpenAI / Codex | `codex exec` |
+| Codex CLI (OpenAI) | Anthropic / Claude | `claude -p` |
+
+Confirm the reviewer CLI is on `PATH` and authenticated before dispatching —
+`command -v codex` / `command -v claude`, then a throwaway one-liner
+(`codex exec --sandbox read-only "reply OK"` / `claude -p "reply OK"`). If it's
+missing, unauthenticated, or errors out, **fall back to in-harness subagents**
+(the `Agent` tool) and say so explicitly in the report's Coverage section — a
+same-vendor review is still worth running, but the reader must know the
+independence guarantee didn't hold.
+
+**Invocation shapes.** Write each lens prompt to its own file under the
+scratchpad, launch all of them in one backgrounded batch, and `wait`:
+
+```bash
+D=/tmp/review-team.$$; mkdir -p "$D"
+# ... write "$D/prompt-<lens>.md" for each lens ...
+
+# Anthropic host → review with OpenAI
+for L in correctness security tests performance contracts readability; do
+  codex exec --sandbox read-only --skip-git-repo-check -C "$PWD" \
+    --output-last-message "$D/out-$L.md" "$(cat "$D/prompt-$L.md")" \
+    >"$D/log-$L.txt" 2>&1 &
+done; wait
+
+# OpenAI host → review with Anthropic
+for L in correctness security tests performance contracts readability; do
+  claude -p --permission-mode plan "$(cat "$D/prompt-$L.md")" \
+    >"$D/out-$L.md" 2>"$D/log-$L.txt" &
+done; wait
+```
+
+Notes that matter in practice:
+
+- **Read-only.** Reviewers must not edit the tree — you apply the fixes in
+  Step 6. `codex exec --sandbox read-only` enforces it; for `claude -p` pass
+  `--permission-mode plan` (or restrict with `--allowedTools "Read,Grep,Glob"`).
+- **Give the reviewer the repo, not just the diff.** Both CLIs run inside the
+  working directory and can open files, which is exactly what makes the
+  validation round in Step 4 useful — a reviewer that can read the callers
+  refutes its own false positives.
+- **One CLI process per lens**, so lenses stay independent and a crash in one
+  doesn't take the batch down. Check each `out-<lens>.md` is non-empty before
+  synthesizing; re-run just the ones that came back empty.
+- Long diffs: pipe the prompt via stdin (`codex exec - < "$D/prompt-$L.md"`)
+  rather than fighting argv limits.
+- These are external processes with their own token budgets — they don't consume
+  your context. Read the small structured outputs, not the logs.
+
+Everything downstream (Steps 2–6) is unchanged in substance: the lenses, the
+disprove-first validation, and the fixing are the same work, just executed by
+the other vendor's model.
 
 ## Step 1 — Establish the diff
 
@@ -147,10 +219,12 @@ not generic best practice:
 Tell those subagents to read the named skill first; that's where the
 project-specific failure modes live.
 
-## Step 3 — Dispatch the team (parallel)
+## Step 3 — Dispatch the team (parallel, cross-vendor)
 
-Spawn all chosen lenses in a single message so they run concurrently. Each
-subagent has no conversation context, so each prompt is self-contained:
+Launch every chosen lens as its own reviewer-CLI process, all backgrounded in a
+single batch (Step 0 has the invocation shapes), so they run concurrently. Each
+reviewer is a fresh process with no conversation context, so each prompt must be
+fully self-contained:
 
 ```
 You are reviewing a PR through the <LENS> lens only. Ignore issues outside
@@ -183,10 +257,18 @@ through your lens, say so and report nothing. Do not invent findings to look
 thorough — a false positive costs more than a miss here.
 ```
 
-Use a structured-output schema if the harness supports it, so synthesis doesn't
-hinge on parsing prose. For very large diffs, give each specialist only the
-files relevant to its lens rather than the whole thing — dumping unrelated
-context in raises false positives rather than lowering them.
+Ask for a fixed output shape so synthesis doesn't hinge on parsing prose —
+`codex exec --output-schema <file>` takes a JSON Schema directly; with
+`claude -p` state the JSON shape in the prompt and parse the result. For very
+large diffs, give each specialist only the files relevant to its lens rather
+than the whole thing — dumping unrelated context in raises false positives
+rather than lowering them.
+
+Read each lens's output file when the batch finishes. A reviewer that returned
+nothing (empty file, non-zero exit, auth error in its log) is a *failed* lens,
+not a clean one — re-run it, or record it as skipped in Coverage. Silently
+treating a crashed lens as "found nothing" is how a review lies about its
+breadth.
 
 ## Step 4 — Dedupe, then validate by disproving (this is the real work)
 
@@ -202,7 +284,9 @@ ignore the whole thing, which is worse than no review.
 
 2. **Validate by disproving (a second fan-out).** This is the single
    highest-value step. For each surviving critical/high candidate, spawn a
-   *validator* subagent whose job is to **refute** the finding, not confirm it:
+   *validator* — again on the opposite-vendor CLI, one process per candidate,
+   backgrounded in parallel — whose job is to **refute** the finding, not
+   confirm it:
 
    ```
    A reviewer claims this is a <severity> issue:
@@ -219,7 +303,9 @@ ignore the whole thing, which is worse than no review.
 
    Asking agents to disprove rather than "double-check" is what kills confident
    hallucinations — a confirm-prompt rubber-stamps, a refute-prompt actually
-   tests. Run these in parallel; only **confirmed** findings survive at full
+   tests. Give the validator repo access (it runs in the working directory) so
+   it can check the callers and types rather than reasoning from the snippet.
+   Run these in parallel; only **confirmed** findings survive at full
    severity. `needs-author-call` items are reported but not auto-fixed. Validate
    mediums too — they get fixed, so they need the same proof — but a quick look
    from you suffices rather than a dedicated validator. Lows don't need it.
@@ -253,7 +339,8 @@ Output this structure:
 and tells the author what not to second-guess.>
 
 ## Coverage
-Lenses run: <list>. Anything intentionally skipped and why.
+Reviewed by: <codex exec / claude -p / in-harness subagents (fallback, why)>
+Lenses run: <list>. Anything skipped or failed, and why.
 ```
 
 Lead with the verdict — the reader wants the headline first. Keep mediums and
@@ -317,6 +404,10 @@ tree staged-and-ready so the user (or `/ship`) takes it from there.
   it. Re-verify after fixing — a fix that breaks the build isn't a fix.
 - **Review the diff, not the repo.** Flag what the change introduces;
   pre-existing issues and lint-catchable nits are out of scope and just noise.
+- **Cross the vendor line.** A model is a poor reviewer of its own output — it
+  shares the priors that produced the bug. Review Anthropic-written code with
+  `codex exec` and OpenAI-written code with `claude -p`; if the other CLI is
+  unavailable, fall back but say so in the report.
 - **Match the team to the diff.** Skip lenses with nothing to examine; add
   domain lenses when the change needs them. Don't convene a team for a typo fix.
 - **Severity is about consequence, not surprise.** "Could in principle" is not
