@@ -65,7 +65,7 @@ args=(exec -C "$(pwd)" -s workspace-write --skip-git-repo-check)
 
 log="$(mktemp -t codex_image.XXXXXX.log)"
 echo "→ handing off to codex ($mode)…" >&2
-if ! codex "${args[@]}" "$instr" >"$log" 2>&1; then
+if ! codex "${args[@]}" "$instr" </dev/null >"$log" 2>&1; then
   echo "codex exec failed. output:" >&2
   cat "$log" >&2
   die "codex handoff failed (see output above). If it's an auth error, run 'codex login'."

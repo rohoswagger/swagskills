@@ -53,7 +53,7 @@ Detect the host first — don't assume:
 
 Confirm the reviewer CLI is on `PATH` and authenticated before dispatching —
 `command -v codex` / `command -v claude`, then a throwaway one-liner
-(`codex exec --sandbox read-only "reply OK"` / `claude -p "reply OK"`). If it's
+(`codex exec --sandbox read-only "reply OK" </dev/null` / `claude -p "reply OK" </dev/null`). If it's
 missing, unauthenticated, or errors out, **fall back to in-harness subagents**
 (the `Agent` tool) and say so explicitly in the report's Coverage section — a
 same-vendor review is still worth running, but the reader must know the
@@ -70,17 +70,23 @@ D=/tmp/review-team.$$; mkdir -p "$D"
 for L in correctness security tests performance contracts readability; do
   codex exec --sandbox read-only --skip-git-repo-check -C "$PWD" \
     --output-last-message "$D/out-$L.md" "$(cat "$D/prompt-$L.md")" \
-    >"$D/log-$L.txt" 2>&1 &
+    </dev/null >"$D/log-$L.txt" 2>&1 &
 done; wait
 
 # OpenAI host → review with Anthropic
 for L in correctness security tests performance contracts readability; do
   claude -p --permission-mode plan "$(cat "$D/prompt-$L.md")" \
-    >"$D/out-$L.md" 2>"$D/log-$L.txt" &
+    </dev/null >"$D/out-$L.md" 2>"$D/log-$L.txt" &
 done; wait
 ```
 
 Notes that matter in practice:
+
+- **Close stdin.** When stdin is not a terminal, both CLIs read it and add it
+  to the prompt. An agent shell keeps stdin open and never sends EOF, so the
+  reviewer waits forever. `codex exec` logs only "Reading additional input from
+  stdin..." and the output file stays empty. Every call must have `</dev/null`,
+  unless the prompt comes from stdin (`codex exec - < file`).
 
 - **Read-only.** Reviewers must not edit the tree — you apply the fixes in
   Step 6. `codex exec --sandbox read-only` enforces it; for `claude -p` pass

@@ -59,7 +59,7 @@ verified invocation:
 codex exec -C "$(pwd)" -s workspace-write --skip-git-repo-check \
   "Use the built-in image generation tool to create <description>. \
    Save the result as an absolute-path PNG at /abs/path/to/out.png. \
-   Do not save anywhere else."
+   Do not save anywhere else." </dev/null
 ```
 
 Why each piece matters:
@@ -105,7 +105,7 @@ Direct form, for reference:
 ```bash
 codex exec -i ./images/fox.png -C "$(pwd)" -s workspace-write --skip-git-repo-check \
   "Edit the attached image: make it a watercolor painting. \
-   Save the edited PNG at /abs/path/to/out.png. Do not save anywhere else."
+   Save the edited PNG at /abs/path/to/out.png. Do not save anywhere else." </dev/null
 ```
 
 ## Transparent backgrounds
@@ -147,7 +147,7 @@ codex exec -s workspace-write --skip-git-repo-check \
   -c shell_environment_policy.inherit=all \
   -c shell_environment_policy.ignore_default_excludes=true \
   "Call the OpenAI Images API (model gpt-image-2) with prompt '<...>', \
-   decode data[0].b64_json, and save to /abs/path/out.png. Use \$OPENAI_API_KEY."
+   decode data[0].b64_json, and save to /abs/path/out.png. Use \$OPENAI_API_KEY." </dev/null
 ```
 
 The response returns base64 in `data[0].b64_json` (gpt-image models never return
